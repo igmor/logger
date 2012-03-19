@@ -86,8 +86,11 @@ private:
     std::queue<Data>			m_queue;
     mutable boost::mutex		m_mutex;
     boost::condition_variable	m_condition_variable;
-
+	bool						m_shutdown;
 public:
+	
+	concurrent_queue() : m_shutdown(false) {}
+
     void push(Data const& data)
     {
         boost::mutex::scoped_lock lock(m_mutex);
@@ -102,23 +105,32 @@ public:
         return m_queue.empty();
     }
 
-    void wait_and_pop(Data& popped_value)
+	void wait_and_pop(std::vector<Data>& values)
     {
         boost::mutex::scoped_lock lock(m_mutex);
-        while(m_queue.empty())
+        while(m_queue.empty() && !m_shutdown)
         {
             m_condition_variable.wait(lock);
         }
         
-        popped_value=m_queue.front();
-        m_queue.pop();
+		while(!m_queue.empty())
+		{
+	        values.push_back(m_queue.front());
+		    m_queue.pop();
+		}
     }
 
+	void shutdown()
+	{
+		m_shutdown = true;
+		//unblock waiting thread
+        m_condition_variable.notify_one();
+	}
 };
 
 /*
  *  Logger implementation sigleton. You should use something like this to start using logger
- *
+ *  Please note you may lose some messages if you try to log anything after the shutdown has already initiated
  * 	Logger::setOutputFormatter(boost::shared_ptr<LoggerFormatter>(new DefaultLoggerFormatter()));
  *	Logger::info("%s\n", "this is just a log message");
  *
@@ -245,6 +257,9 @@ class Logger :  Singleton<Logger>
 
 		mutable boost::mutex				m_fop_mutex;
 };
+
+template<class T> boost::once_flag Singleton<T>::s_once = BOOST_ONCE_INIT;
+template<class T> boost::scoped_ptr<T> Singleton<T>::s_instance;
 
 typedef boost::date_time::microsec_clock<boost::posix_time::ptime> utc_mcs_time;
 typedef boost::date_time::second_clock<boost::posix_time::ptime> utc_sec_time;

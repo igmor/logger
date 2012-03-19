@@ -5,20 +5,15 @@
 #include "Logger.h"
 #include <sstream>
 
-using namespace std;
-
-const uint32 MAX_SNPRINTF_BUF_SIZE = 2048;
+static const uint32 MAX_SNPRINTF_BUF_SIZE = 2048;
 
 //MAX_PATH has too many issues, we just need reasonable buffer size
-const uint32 MAX_PATH_LENGTH = 2048;
+static const uint32 MAX_PATH_LENGTH = 2048;
 
 //windows renamed posix string functions to an unsafe version _s*
 #ifdef _WIN32
 #define snprintf _snprintf
 #endif
-
-template<class T> boost::once_flag Singleton<T>::s_once = BOOST_ONCE_INIT;
-template<class T> boost::scoped_ptr<T> Singleton<T>::s_instance;
 
 std::string getLevelToken(Logger::LOGLEVEL level)
 {
@@ -37,7 +32,7 @@ std::string DefaultLoggerFormatter::format( const Logger& logger,
 											const std::string& delim, 
 											const LogEntry& logEntry)
 {
-	ostringstream s(ostringstream::out);
+	std::ostringstream s(std::ostringstream::out);
 	s << delim 
 		<< getLevelToken(logger.getLevel()) << delim 
 		<< logEntry.component << delim
@@ -143,6 +138,7 @@ void Logger::startQueue()
 void Logger::stopQueue()
 {
 	m_bRunning = false;
+	m_queue.shutdown();
 	m_QueueThread.join();
 }
 
@@ -155,7 +151,6 @@ void Logger::rotateFile()
 	if (m_rotatepos > 0)
 	{
 		// close, rename, reopen-truncated..
-		fflush(m_stream);
 		fclose(m_stream);
 		//construct new timestamp-based filename 
 		char newname[MAX_PATH_LENGTH+1];
@@ -175,17 +170,17 @@ void Logger::processQueue()
 {
 	while (m_bRunning)
 	{
-		LogEntry logEntry;
-		while (!m_queue.empty())
-		{
-			m_queue.wait_and_pop(logEntry);
+		std::vector<LogEntry> logEntries;
+		m_queue.wait_and_pop(logEntries);
 
+		for (unsigned int i = 0; i < logEntries.size(); i++)
 			if (m_formatter)
 			{
-				std::string message = m_formatter->format(*this, m_delim, logEntry);
+				std::string message = m_formatter->format(*this, m_delim, logEntries[i]);
 				if (m_stream)
 				{
 					fprintf(m_stream, "%s\n", message.c_str());
+					fflush(m_stream);
 
 					boost::mutex::scoped_lock lock(m_fop_mutex);
 
@@ -194,7 +189,6 @@ void Logger::processQueue()
 						rotateFile();
 				}
 			}
-		}
 	}
 }
 
