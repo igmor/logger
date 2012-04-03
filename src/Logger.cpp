@@ -15,26 +15,13 @@ static const uint32 MAX_PATH_LENGTH = 2048;
 #define snprintf _snprintf
 #endif
 
-std::string getLevelToken(Logger::LOGLEVEL level)
-{
-	switch (level)
-	{
-		case 0: return "FATAL"; break;
-		case 1: return "ERROR"; break;
-		case 2: return "WARN"; break;
-		case 3: return "INFO"; break;
-		case 4: return "DEBUG"; break;
-		default:
-			return "UNDEFINED_LOG_LEVEL";
-	}	
-}
 std::string DefaultLoggerFormatter::format( const Logger& logger, 
 											const std::string& delim, 
 											const LogEntry& logEntry)
 {
 	std::ostringstream s(std::ostringstream::out);
 	s << delim 
-		<< getLevelToken(logger.getLevel()) << delim 
+		<< Logger::getLevelToken(logger.getLevel()) << delim 
 		<< logEntry.component << delim
 		<< logEntry.file << delim
 		<< logEntry.line << delim
@@ -51,7 +38,6 @@ Logger::Logger() :
 	m_bRunning(false),
 	m_delim("`")
 {
-	startQueue();
 }
 
 Logger::~Logger()
@@ -59,6 +45,22 @@ Logger::~Logger()
 	stopQueue();
 	if (m_stream!=NULL)
 		fclose(m_stream);
+}
+
+std::string Logger::getLevelToken(Logger::LOGLEVEL level)
+{
+	switch (level)
+	{
+		case LOG_LEVEL_SILENT: return "SILENT"; break;
+		case LOG_LEVEL_FATAL: return "FATAL"; break;
+		case LOG_LEVEL_ERROR: return "ERROR"; break;
+		case LOG_LEVEL_WARN: return "WARN"; break;
+		case LOG_LEVEL_INFO: return "INFO"; break;
+		case LOG_LEVEL_DEBUG: return "DEBUG"; break;
+		case LOG_LEVEL_VERBOSE: return "VERBOSE"; break;
+		default:
+			return "UNDEFINED_LOG_LEVEL";
+	}	
 }
 
 int Logger::log(LOGLEVEL level, 
@@ -118,7 +120,7 @@ int Logger::_log(LOGLEVEL level,
 	std::string buf;
 	buf.resize(MAX_SNPRINTF_BUF_SIZE);
 
-	if (level > m_logLevel) 
+	if (level < m_logLevel) 
 		return -1;
 	else
 	{
@@ -140,6 +142,11 @@ void Logger::stopQueue()
 	m_bRunning = false;
 	m_queue.shutdown();
 	m_QueueThread.join();
+	//clear the queue
+	std::vector<LogEntry> logEntries;
+	m_queue.pop(logEntries);
+
+	format(logEntries);
 }
 
 void Logger::rotateFile()
@@ -166,6 +173,26 @@ void Logger::rotateFile()
 	}
 }
 
+void Logger::format(const std::vector<LogEntry>& entries)
+{
+	for (unsigned int i = 0; i < entries.size(); i++)
+		if (m_formatter)
+		{
+			std::string message = m_formatter->format(*this, m_delim, entries[i]);
+			if (m_stream)
+			{
+				fprintf(m_stream, "%s\n", message.c_str());
+				fflush(m_stream);
+
+				boost::mutex::scoped_lock lock(m_fop_mutex);
+
+				long  cur = ftell(m_stream);
+				if (cur >= m_rotatepos)
+					rotateFile();
+			}
+		}
+}
+
 void Logger::processQueue()
 {
 	while (m_bRunning)
@@ -173,22 +200,7 @@ void Logger::processQueue()
 		std::vector<LogEntry> logEntries;
 		m_queue.wait_and_pop(logEntries);
 
-		for (unsigned int i = 0; i < logEntries.size(); i++)
-			if (m_formatter)
-			{
-				std::string message = m_formatter->format(*this, m_delim, logEntries[i]);
-				if (m_stream)
-				{
-					fprintf(m_stream, "%s\n", message.c_str());
-					fflush(m_stream);
-
-					boost::mutex::scoped_lock lock(m_fop_mutex);
-
-					long  cur = ftell(m_stream);
-					if (cur >= m_rotatepos)
-						rotateFile();
-				}
-			}
+		format (logEntries);
 	}
 }
 

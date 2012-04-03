@@ -89,8 +89,6 @@ private:
 	bool						m_shutdown;
 public:
 	
-	concurrent_queue() : m_shutdown(false) {}
-
     void push(Data const& data)
     {
         boost::mutex::scoped_lock lock(m_mutex);
@@ -108,7 +106,7 @@ public:
 	void wait_and_pop(std::vector<Data>& values)
     {
         boost::mutex::scoped_lock lock(m_mutex);
-        while(m_queue.empty() && !m_shutdown)
+        while(m_queue.empty())
         {
             m_condition_variable.wait(lock);
         }
@@ -120,9 +118,18 @@ public:
 		}
     }
 
+	void pop(std::vector<Data>& values)
+    {
+        boost::mutex::scoped_lock lock(m_mutex);
+		while(!m_queue.empty())
+		{
+	        values.push_back(m_queue.front());
+		    m_queue.pop();
+		}
+    }
+
 	void shutdown()
 	{
-		m_shutdown = true;
 		//unblock waiting thread
         m_condition_variable.notify_one();
 	}
@@ -140,11 +147,13 @@ class Logger :  Singleton<Logger>
 {
 	public:
 		typedef enum {
-			LOG_LEVEL_FATAL = 0,
-			LOG_LEVEL_ERROR,
-			LOG_LEVEL_WARN,
+			LOG_LEVEL_SILENT = -1,
+			LOG_LEVEL_VERBOSE = 0,
+			LOG_LEVEL_DEBUG,
 			LOG_LEVEL_INFO,
-			LOG_LEVEL_DEBUG
+			LOG_LEVEL_WARN,
+			LOG_LEVEL_ERROR,
+			LOG_LEVEL_FATAL
 		} LOGLEVEL;
 
         Logger();
@@ -190,6 +199,12 @@ class Logger :  Singleton<Logger>
 			instance().m_formatter = formatter;
 		}
 
+		static void stop()
+		{
+			instance().stopQueue();
+		}
+
+		static std::string getLevelToken(Logger::LOGLEVEL level);
 		/*
 		 * Set's field delimiter, it's a blank space by default
 		 */
@@ -209,18 +224,11 @@ class Logger :  Singleton<Logger>
 	    LOG(warning, LOG_LEVEL_WARN)
 	    LOG(info, LOG_LEVEL_INFO)
 	    LOG(debug, LOG_LEVEL_DEBUG)
+	    LOG(verbose, LOG_LEVEL_VERBOSE)
+	    LOG(silent, LOG_LEVEL_SILENT)
 
 	private:
 		
-        //		Logger();
-		//virtual ~Logger();
-	
-        /*         static Logger& instance() 
-		{       
-			static Logger logger;
-			return logger;
-            }*/
-
 		void _setFileName(const std::string& name);
 		void _setRotationSize(long sz);
 
@@ -237,6 +245,7 @@ class Logger :  Singleton<Logger>
 		void startQueue();
 		void stopQueue();
 		void processQueue();
+		void format(const std::vector<LogEntry>& entries);
 
 		void rotateFile();
 	private:
@@ -269,5 +278,7 @@ typedef boost::date_time::second_clock<boost::posix_time::ptime> utc_sec_time;
 #define LOG_WARN(component,...)		Logger::warning	(__FILE__,__LINE__, utc_mcs_time::universal_time(), component,__VA_ARGS__)
 #define LOG_INFO(component,...)		Logger::info	(__FILE__,__LINE__, utc_mcs_time::universal_time(), component,__VA_ARGS__)
 #define LOG_DEBUG(component,...)	Logger::debug	(__FILE__,__LINE__, utc_mcs_time::universal_time(), component, __VA_ARGS__)
+#define LOG_VERBOSE(component,...)	Logger::verbose	(__FILE__,__LINE__, utc_mcs_time::universal_time(), component, __VA_ARGS__)
+#define LOG_SILENT(component,...)	Logger::silent	(__FILE__,__LINE__, utc_mcs_time::universal_time(), component, __VA_ARGS__)
 
 #endif
